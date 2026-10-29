@@ -7,7 +7,7 @@ import html
 
 # Check the file argument
 if len(sys.argv) != 2:
-    print("Usage: py WSD.py plant.wsd")
+    print("Usage: py WSD.py filename.wsd")
     sys.exit(1)
 
 filename = sys.argv[1]
@@ -36,7 +36,7 @@ def readInstances(filename):
         instance = text[start:end]
         position = end + len("</instance>")
 
-        # Get the instance ID
+        # Get instance ID
         openingTag = instance[:instance.find(">")]
 
         idStart = openingTag.find('id="')
@@ -47,8 +47,9 @@ def readInstances(filename):
         idEnd = openingTag.find('"', idStart)
         instanceID = openingTag[idStart:idEnd]
 
-        # Get the correct sense
+        # Get correct sense
         senseStart = instance.find('senseid="')
+
         if senseStart == -1:
             continue
 
@@ -56,7 +57,7 @@ def readInstances(filename):
         senseEnd = instance.find('"', senseStart)
         sense = instance[senseStart:senseEnd]
 
-        # Get the context
+        # Get context
         contextStart = instance.find("<context>")
         contextEnd = instance.find("</context>")
 
@@ -66,14 +67,13 @@ def readInstances(filename):
         contextStart += len("<context>")
         context = instance[contextStart:contextEnd]
 
-        # Remove the target word tags
+        # Remove head tags
         context = context.replace("<head>", "")
         context = context.replace("</head>", "")
 
         instances.append((instanceID, sense, context))
 
     return instances
-
 
 # Turn context into words
 def tokenize(context):
@@ -160,7 +160,6 @@ def predictSense(context, model):
 # Test the model on one fold
 def testNaiveBayes(testData, model):
     correct = 0
-    errors = []
     predictions = []
 
     for instanceID, actualSense, context in testData:
@@ -170,23 +169,18 @@ def testNaiveBayes(testData, model):
 
         if predictedSense == actualSense:
             correct += 1
-        else:
-            errors.append((
-                instanceID,
-                actualSense,
-                predictedSense,
-                context
-            ))
 
-    accuracy = correct / len(testData) if testData else 0
+    if testData:
+        accuracy = correct / len(testData)
+    else:
+        accuracy = 0.0
 
-    return accuracy, correct, errors, predictions
+    return accuracy, correct, predictions
 
 
 # Train and test using five folds
 def fivefoldCrossValidation(folds, filename):
     foldAccuracies = []
-    allErrors = []
     totalCorrect = 0
     totalTested = 0
 
@@ -194,16 +188,15 @@ def fivefoldCrossValidation(folds, filename):
         for i in range(5):
             trainingData = []
 
-            # Use four folds for training
             for j in range(5):
                 if j != i:
                     trainingData.extend(folds[j])
 
-            # Use the remaining fold for testing
             testData = folds[i]
 
             model = trainNaiveBayes(trainingData)
-            accuracy, correct, errors, predictions = testNaiveBayes(
+
+            accuracy, correct, predictions = testNaiveBayes(
                 testData, model
             )
 
@@ -213,28 +206,20 @@ def fivefoldCrossValidation(folds, filename):
 
             print(f"Fold {i + 1}: {accuracy * 100:.2f}%")
 
-            # Save predictions for this fold
-            output.write(f"Fold {i + 1}\n")
-
             for instanceID, predictedSense in predictions:
-                output.write(f"{instanceID} {predictedSense}\n")
-
-            output.write("\n")
-
-            # Save errors for review
-            for instanceID, actual, predicted, context in errors:
-                allErrors.append((
-                    i + 1, instanceID, actual, predicted, context
-                ))
-
+                output.write(
+                    f"{instanceID} {predictedSense}\n"
+                )
     average = sum(foldAccuracies) / 5
-    overall = totalCorrect / totalTested if totalTested else 0
-
+    overall = (
+        totalCorrect / totalTested
+        if totalTested else 0
+    )
     print(f"Average Accuracy: {average * 100:.2f}%")
     print(f"Overall Accuracy: {overall * 100:.2f}%")
     print(f"Created {filename}.out")
 
-    return foldAccuracies, allErrors, average
+    return foldAccuracies, average, overall
 
 
 # Main program
@@ -261,19 +246,7 @@ for i in range(5):
 print()
 
 # Run cross-validation
-foldAccuracies, errors, average = fivefoldCrossValidation(
+foldAccuracies, average, overall = fivefoldCrossValidation(
     folds, filename
 )
 
-# Show three errors for the written answers
-print("\nThree Classification Errors")
-
-for i, error in enumerate(errors[:3], start=1):
-    fold, instanceID, actual, predicted, context = error
-
-    print(f"\nError {i}")
-    print("Fold:", fold)
-    print("Instance:", instanceID)
-    print("Correct:", actual)
-    print("Predicted:", predicted)
-    print("Context:", " ".join(context.split()))

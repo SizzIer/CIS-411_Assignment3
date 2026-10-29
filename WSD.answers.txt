@@ -1,0 +1,76 @@
+WSD.answers
+
+bass.wsd
+
+1.The program is complete, I modified the code to be generic and work with multiple datasets.
+
+2.
+bass.wsd
+
+3.
+Fold 1: 72.73%
+Fold 2: 95.45%
+Fold 3: 90.91%
+Fold 4: 100.00%
+Fold 5: 94.74%
+Average Accuracy: 90.77%
+
+crane.wsd
+
+1.The program works with this dataset as well
+
+2.
+crane.wsd
+
+3. 
+Fold 1: 68.42%
+Fold 2: 73.68%
+Fold 3: 73.68%
+Fold 4: 89.47%
+Fold 5: 84.21%
+Average Accuracy: 77.89%
+
+motion.wsd
+
+1. The program is complete and works with motion.wsd
+
+2.
+motion.wsd
+
+3.
+Fold 1: 78.05%
+Fold 2: 85.37%
+Fold 3: 90.24%
+Fold 4: 92.68%
+Fold 5: 89.19%
+Average Accuracy: 87.11%
+
+palm.wsd
+
+1. The program is complete and works with palm.wsd
+
+2.
+palm.wsd
+
+3.
+Fold 1: 70.73%
+Fold 2: 75.61%
+Fold 3: 65.85%
+Fold 4: 80.49%
+Fold 5: 78.38%
+Average Accuracy: 74.21%
+
+tank.wsd
+
+1. The program is complete and works with tank.wsd
+
+2.
+tank.wsd
+
+3.
+Fold 1: 65.85%
+Fold 2: 70.73%
+Fold 3: 78.05%
+Fold 4: 80.49%
+Fold 5: 67.57%
+Average Accuracy: 72.54%
