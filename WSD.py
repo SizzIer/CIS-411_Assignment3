@@ -1,504 +1,279 @@
+
 import sys
 import math
 import string
 import html
 
 
-# --------------------------------------------------
-# Check command-line argument
-# --------------------------------------------------
-
+# Check the file argument
 if len(sys.argv) != 2:
-    print("Usage: python wsd.py plant.wsd")
+    print("Usage: py WSD.py plant.wsd")
     sys.exit(1)
 
 filename = sys.argv[1]
 
 
-# --------------------------------------------------
-# Read all annotated instances
-# --------------------------------------------------
-
+# Read the instances from the file
 def readInstances(filename):
     instances = []
 
     with open(filename, "r", encoding="utf-8") as file:
-        fileText = file.read()
+        text = html.unescape(file.read())
 
-    # Convert encoded tags such as &lt;instance&gt;
-    # into normal tags such as <instance>
-    fileText = html.unescape(fileText)
-
-    searchPosition = 0
+    position = 0
 
     while True:
-        instanceStart = fileText.find(
-            "<instance",
-            searchPosition
-        )
+        start = text.find("<instance", position)
 
-        if instanceStart == -1:
+        if start == -1:
             break
 
-        instanceEnd = fileText.find(
-            "</instance>",
-            instanceStart
-        )
+        end = text.find("</instance>", start)
 
-        if instanceEnd == -1:
+        if end == -1:
             break
 
-        instanceText = fileText[
-            instanceStart:instanceEnd
-        ]
+        instance = text[start:end]
+        position = end + len("</instance>")
 
-        # Find the correct sense label
-        senseStart = instanceText.find('senseid="')
+        # Get the instance ID
+        openingTag = instance[:instance.find(">")]
 
+        idStart = openingTag.find('id="')
+        if idStart == -1:
+            continue
+
+        idStart += len('id="')
+        idEnd = openingTag.find('"', idStart)
+        instanceID = openingTag[idStart:idEnd]
+
+        # Get the correct sense
+        senseStart = instance.find('senseid="')
         if senseStart == -1:
-            searchPosition = (
-                instanceEnd + len("</instance>")
-            )
             continue
 
         senseStart += len('senseid="')
-        senseEnd = instanceText.find('"', senseStart)
+        senseEnd = instance.find('"', senseStart)
+        sense = instance[senseStart:senseEnd]
 
-        sense = instanceText[senseStart:senseEnd]
-
-        # Find the context
-        contextStart = instanceText.find("<context>")
-        contextEnd = instanceText.find("</context>")
+        # Get the context
+        contextStart = instance.find("<context>")
+        contextEnd = instance.find("</context>")
 
         if contextStart == -1 or contextEnd == -1:
-            searchPosition = (
-                instanceEnd + len("</instance>")
-            )
             continue
 
         contextStart += len("<context>")
+        context = instance[contextStart:contextEnd]
 
-        context = instanceText[
-            contextStart:contextEnd
-        ]
-
-        # Remove the head tags but keep the target word
+        # Remove the target word tags
         context = context.replace("<head>", "")
         context = context.replace("</head>", "")
 
-        instances.append((sense, context))
-
-        searchPosition = (
-            instanceEnd + len("</instance>")
-        )
+        instances.append((instanceID, sense, context))
 
     return instances
 
 
-# --------------------------------------------------
-# Convert the context into word features
-# --------------------------------------------------
-
+# Turn context into words
 def tokenize(context):
-    # Treat uppercase and lowercase forms as the same word
     context = context.lower()
 
-    # Replace punctuation marks with spaces
     for mark in string.punctuation:
         context = context.replace(mark, " ")
 
-    # All words in the context are features
-    words = context.split()
-
-    return words
+    return context.split()
 
 
-# --------------------------------------------------
-# Create five folds
-# --------------------------------------------------
-
+# Divide instances into five folds
 def createFolds(instances):
-    foldSize = math.ceil(len(instances) / 5)
-
+    foldSize = (len(instances) + 4) // 5
     folds = []
 
-    # Folds 1 through 4 get the rounded-up fold size
     for i in range(4):
         start = i * foldSize
-        end = start + foldSize
+        folds.append(instances[start:start + foldSize])
 
-        folds.append(instances[start:end])
-
-    # Fold 5 gets all remaining instances
     folds.append(instances[4 * foldSize:])
 
     return folds
 
 
-# --------------------------------------------------
-# Train the Naive Bayes classifier
-# --------------------------------------------------
-
+# Count senses and words in the training data
 def trainNaiveBayes(trainingData):
     senseCounts = {}
     wordCounts = {}
-    totalWordsBySense = {}
+    totalWords = {}
     vocabulary = set()
 
-    for sense, context in trainingData:
+    for instanceID, sense, context in trainingData:
+        senseCounts[sense] = senseCounts.get(sense, 0) + 1
 
-        if sense not in senseCounts:
-            senseCounts[sense] = 0
-            totalWordsBySense[sense] = 0
-
-        # Count the number of instances for this sense
-        senseCounts[sense] += 1
-
-        # Extract all context-word features
         words = tokenize(context)
-
-        # Count all word occurrences for this sense
-        totalWordsBySense[sense] += len(words)
+        totalWords[sense] = totalWords.get(sense, 0) + len(words)
 
         for word in words:
             vocabulary.add(word)
+            key = (sense, word)
+            wordCounts[key] = wordCounts.get(key, 0) + 1
 
-            if (sense, word) not in wordCounts:
-                wordCounts[(sense, word)] = 0
-
-            wordCounts[(sense, word)] += 1
-
-    return (
-        senseCounts,
-        wordCounts,
-        totalWordsBySense,
-        vocabulary
-    )
+    return senseCounts, wordCounts, totalWords, vocabulary
 
 
-# --------------------------------------------------
-# Predict the sense of one test instance
-# --------------------------------------------------
+# Predict the most likely sense
+def predictSense(context, model):
+    senseCounts, wordCounts, totalWords, vocabulary = model
 
-def predictSense(
-    context,
-    senseCounts,
-    wordCounts,
-    totalWordsBySense,
-    vocabulary
-):
     words = tokenize(context)
-
-    totalTrainingInstances = sum(
-        senseCounts.values()
-    )
-
+    totalInstances = sum(senseCounts.values())
     vocabularySize = len(vocabulary)
 
     bestSense = None
-    bestLogProbability = float("-inf")
+    bestScore = float("-inf")
 
     for sense in senseCounts:
-
-        # Prior probability:
-        # P(sense) = count(sense) / training instances
-        prior = (
-            senseCounts[sense]
-            / totalTrainingInstances
-        )
-
-        # Begin in log space
-        logProbability = math.log(prior)
+        # Start with the sense probability
+        prior = senseCounts[sense] / totalInstances
+        score = math.log(prior)
 
         for word in words:
-
-            # Ignore words that never occurred anywhere
-            # in this training run
             if word not in vocabulary:
                 continue
 
-            wordCount = wordCounts.get(
-                (sense, word),
-                0
+            # Add-one smoothing
+            count = wordCounts.get((sense, word), 0)
+            probability = (
+                (count + 1) /
+                (totalWords[sense] + vocabularySize)
             )
 
-            totalWords = totalWordsBySense[sense]
+            # Use logs to avoid underflow
+            score += math.log(probability)
 
-            # Add-one smoothing:
-            #
-            # P(word | sense) =
-            # (count(word, sense) + 1)
-            # /
-            # (total words for sense + vocabulary size)
-            probabilityWordGivenSense = (
-                (wordCount + 1)
-                /
-                (totalWords + vocabularySize)
-            )
-
-            # Add log probabilities to avoid underflow
-            logProbability += math.log(
-                probabilityWordGivenSense
-            )
-
-        # Keep the sense with the highest probability
-        if logProbability > bestLogProbability:
-            bestLogProbability = logProbability
+        if score > bestScore:
+            bestScore = score
             bestSense = sense
 
     return bestSense
 
 
-# --------------------------------------------------
-# Test one trained model
-# --------------------------------------------------
-
+# Test the model on one fold
 def testNaiveBayes(testData, model):
-    (
-        senseCounts,
-        wordCounts,
-        totalWordsBySense,
-        vocabulary
-    ) = model
-
     correct = 0
     errors = []
+    predictions = []
 
-    for actualSense, context in testData:
+    for instanceID, actualSense, context in testData:
+        predictedSense = predictSense(context, model)
 
-        predictedSense = predictSense(
-            context,
-            senseCounts,
-            wordCounts,
-            totalWordsBySense,
-            vocabulary
-        )
+        predictions.append((instanceID, predictedSense))
 
         if predictedSense == actualSense:
             correct += 1
         else:
-            errors.append(
-                (
-                    actualSense,
-                    predictedSense,
-                    context
-                )
-            )
-
-    totalTested = len(testData)
-
-    if totalTested == 0:
-        accuracy = 0.0
-    else:
-        accuracy = correct / totalTested
-
-    return correct, totalTested, accuracy, errors
-
-
-# --------------------------------------------------
-# Perform five-fold cross-validation
-# --------------------------------------------------
-
-def fivefoldCrossValidation(folds):
-    totalCorrect = 0
-    totalTested = 0
-
-    for i in range(5):
-        trainingData = []
-        testData = []
-
-        for j in range(5):
-            if j == i:
-                testData.extend(folds[j])
-            else:
-                trainingData.extend(folds[j])
-
-        model = trainNaiveBayes(trainingData)
-
-        correct, tested, accuracy = testNaiveBayes(
-            testData,
-            model
-        )
-
-        totalCorrect += correct
-        totalTested += tested
-
-        print(f"Fold {i + 1} Accuracy: {accuracy * 100:.2f}%")
-
-    if totalTested > 0:
-        overallAccuracy = totalCorrect / totalTested
-    else:
-        overallAccuracy = 0.0
-
-    print(f"Overall Accuracy: {overallAccuracy * 100:.2f}%")
-
-# --------------------------------------------------
-# Create WSD.answers
-# --------------------------------------------------
-
-def createAnswersFile(
-    foldAccuracies,
-    errors,
-    overallAccuracy
-):
-    with open(
-        "WSD.answers",
-        "w",
-        encoding="utf-8"
-    ) as answerFile:
-
-        # State how complete the program is
-        answerFile.write(
-            "The program is complete.\n"
-        )
-
-        # The dataset name must be on a line by itself
-        answerFile.write("plant.wsd\n")
-
-        # Write accuracy for each of the five folds
-        for i in range(5):
-            answerFile.write(
-                f"Fold {i + 1} Accuracy: "
-                f"{foldAccuracies.4f} "
-                f"({foldAccuracies[i] * 100:.2f}%)\n"
-            )
-
-        answerFile.write(
-            f"Overall Accuracy: "
-            f"{overallAccuracy:.4f} "
-            f"({overallAccuracy * 100:.2f}%)\n"
-        )
-
-        answerFile.write("\n")
-        answerFile.write(
-            "Three Classification Errors:\n"
-        )
-
-        numberOfErrors = min(3, len(errors))
-
-        for i in range(numberOfErrors):
-            (
-                foldNumber,
+            errors.append((
+                instanceID,
                 actualSense,
                 predictedSense,
                 context
-            ) = errors[i]
+            ))
 
-            # Put the context on one readable line
-            cleanContext = " ".join(
-                context.split()
+    accuracy = correct / len(testData) if testData else 0
+
+    return accuracy, correct, errors, predictions
+
+
+# Train and test using five folds
+def fivefoldCrossValidation(folds, filename):
+    foldAccuracies = []
+    allErrors = []
+    totalCorrect = 0
+    totalTested = 0
+
+    with open(filename + ".out", "w", encoding="utf-8") as output:
+        for i in range(5):
+            trainingData = []
+
+            # Use four folds for training
+            for j in range(5):
+                if j != i:
+                    trainingData.extend(folds[j])
+
+            # Use the remaining fold for testing
+            testData = folds[i]
+
+            model = trainNaiveBayes(trainingData)
+            accuracy, correct, errors, predictions = testNaiveBayes(
+                testData, model
             )
 
-            answerFile.write(
-                f"Error {i + 1}: "
-                f"In Fold {foldNumber}, "
-                f"the correct sense was "
-                f"{actualSense}, but the system "
-                f"predicted {predictedSense}. "
-                f"A possible reason is that the "
-                f"context words had a higher combined "
-                f"Naive Bayes probability for "
-                f"{predictedSense} in the training data.\n"
-            )
+            foldAccuracies.append(accuracy)
+            totalCorrect += correct
+            totalTested += len(testData)
 
-            answerFile.write(
-                f"Context: {cleanContext}\n"
-            )
+            print(f"Fold {i + 1}: {accuracy * 100:.2f}%")
 
-        if numberOfErrors < 3:
-            answerFile.write(
-                "Fewer than three classification "
-                "errors were produced.\n"
-            )
+            # Save predictions for this fold
+            output.write(f"Fold {i + 1}\n")
+
+            for instanceID, predictedSense in predictions:
+                output.write(f"{instanceID} {predictedSense}\n")
+
+            output.write("\n")
+
+            # Save errors for review
+            for instanceID, actual, predicted, context in errors:
+                allErrors.append((
+                    i + 1, instanceID, actual, predicted, context
+                ))
+
+    average = sum(foldAccuracies) / 5
+    overall = totalCorrect / totalTested if totalTested else 0
+
+    print(f"Average Accuracy: {average * 100:.2f}%")
+    print(f"Overall Accuracy: {overall * 100:.2f}%")
+    print(f"Created {filename}.out")
+
+    return foldAccuracies, allErrors, average
 
 
-# --------------------------------------------------
 # Main program
-# --------------------------------------------------
-
 instances = readInstances(filename)
 
-totalInstances = len(instances)
-
-# Stop if the file was not parsed correctly
-if totalInstances == 0:
-    print(
-        "Error: No annotated instances were found."
-    )
-    print(
-        "Check that the input file contains "
-        "<instance>, <context>, and </instance> tags."
-    )
+if not instances:
+    print("Error: No instances found.")
     sys.exit(1)
 
-
-# Determine the possible sense labels
+# Show dataset information
 senseLabels = set()
 
-for sense, context in instances:
+for instanceID, sense, context in instances:
     senseLabels.add(sense)
 
+print("Total instances:", len(instances))
+print("Sense labels:", senseLabels)
 
-# Create the five folds
 folds = createFolds(instances)
 
-
-# Display dataset information
-print("Total instances:", totalInstances)
-print(
-    "Possible sense labels:",
-    len(senseLabels)
-)
-print("Sense labels:", senseLabels)
-print()
-
-
-# Display fold sizes
 for i in range(5):
-    print(
-        f"Fold {i + 1}: "
-        f"{len(folds[i])} instances"
-    )
+    print(f"Fold {i + 1} size: {len(folds[i])}")
 
-
-# Run five-fold cross-validation
-(
-    foldAccuracies,
-    errors,
-    overallAccuracy
-) = fivefoldCrossValidation(folds)
-
-
-# Display three actual errors
 print()
-print("----------------------------------")
-print("Three classification errors")
-print("----------------------------------")
 
-for i in range(min(3, len(errors))):
-    (
-        foldNumber,
-        actualSense,
-        predictedSense,
-        context
-    ) = errors[i]
-
-    cleanContext = " ".join(context.split())
-
-    print()
-    print(f"Error {i + 1}")
-    print("Fold:", foldNumber)
-    print("Actual:", actualSense)
-    print("Predicted:", predictedSense)
-    print("Context:", cleanContext)
-
-
-# Create the required answer file
-createAnswersFile(
-    foldAccuracies,
-    errors,
-    overallAccuracy
+# Run cross-validation
+foldAccuracies, errors, average = fivefoldCrossValidation(
+    folds, filename
 )
 
-print()
-print("Created WSD.answers")
+# Show three errors for the written answers
+print("\nThree Classification Errors")
+
+for i, error in enumerate(errors[:3], start=1):
+    fold, instanceID, actual, predicted, context = error
+
+    print(f"\nError {i}")
+    print("Fold:", fold)
+    print("Instance:", instanceID)
+    print("Correct:", actual)
+    print("Predicted:", predicted)
+    print("Context:", " ".join(context.split()))
